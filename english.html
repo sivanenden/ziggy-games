@@ -67,6 +67,21 @@ input[type=text]{width:100%;font:inherit;font-size:17px;border:3px solid var(--l
 .spk{display:inline-flex;align-items:center;gap:10px;justify-content:center}
 .big-spk{font-size:24px;padding:20px 34px}
 a.link{display:inline-block}
+@media(max-width:600px){
+.wrap{padding-top:10px;padding-bottom:24px}
+.dog{max-width:180px}.play-dog{max-width:96px!important}
+h1{font-size:30px}h2{font-size:21px}
+.lead{font-size:16px;margin-top:2px}.status{margin:2px 0 6px;font-size:14px}
+.card{padding:16px;border-radius:22px;margin-top:8px;box-shadow:0 6px 0 var(--brown2),0 12px 28px #0003}
+.modes{gap:10px;margin-top:12px}
+.btn{font-size:18px;padding:11px 16px;min-height:48px}.mode small{font-size:14px}
+.tip{margin-top:10px;font-size:14px;padding:9px 12px}
+.word{font-size:42px}.q{font-size:19px;margin-top:8px}.ask{font-size:16px;margin-top:10px}
+.ans{margin-top:12px;padding-top:12px}.big-spk{font-size:20px;padding:14px 22px}
+.keys{display:none}.row{margin-top:12px;gap:10px}
+.row.pair{flex-direction:row}.row.pair .btn{flex:1;width:auto}
+.score{font-size:56px}
+}
 </style>
 </head>
 <body>
@@ -242,7 +257,7 @@ function card(){
   const pct = Math.round(S.done / S.total * 100);
   app.innerHTML = `
   <div class="top"><button class="link" id="back">יציאה</button><div class="bar"><i style="width:${pct}%"></i></div><b>${S.done}/${S.total}</b></div>
-  <div style="max-width:300px;margin:0 auto">${dog()}</div>
+  <div class="play-dog" style="max-width:300px;margin:0 auto">${dog()}</div>
   <div class="card center">
     <span class="tag">${T.tag}</span>
     <div style="margin-top:14px">${T.front(c)}</div>
@@ -251,7 +266,7 @@ function card(){
     <div class="ans hide" id="ans">
       ${T.back(c)}
       <div class="tip">${T.tip}</div>
-      <div class="row"><button class="btn ok" id="yes">צדקתי</button><button class="btn no" id="no">טעיתי</button></div>
+      <div class="row pair"><button class="btn ok" id="yes">צדקתי</button><button class="btn no" id="no">טעיתי</button></div>
     </div>
     <div class="keys">אפשר גם מקלדת: רווח כדי לחשוף, 1 = צדקתי, 2 = טעיתי</div>
   </div>`;
@@ -260,7 +275,7 @@ function card(){
   document.getElementById('yes').onclick = () => answer(true);
   document.getElementById('no').onclick = () => answer(false);
   app.querySelectorAll('[data-say]').forEach(b => b.onclick = () => speak(b.dataset.say, !!b.dataset.slow));
-  if (T.auto) setTimeout(() => speak(c.w), 350);
+  if (T.auto) speak(c.w);
 }
 function reveal(){
   if (S.revealed || S.lock) return; S.revealed = true;
