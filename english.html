@@ -171,13 +171,17 @@ async function loadWeeks(){
   return null;
 }
 
-/* ---------- speech (English only): clear, slow American voice from the device ---------- */
+/* ---------- speech (English only) ----------
+   Primary: a real human US recording from Wikimedia (crystal clear, consistent accent).
+   "לאט" slows the recording with a pitch-preserving playbackRate (which actually works).
+   Fallback: the device voice, for any word with no recording or on browsers without OGG. */
 let voice = null;
 const canSpeak = 'speechSynthesis' in window;
-const canPlay = canSpeak;
+const canAudio = typeof Audio !== 'undefined';
+const canPlay = canSpeak || canAudio;
 // novelty / robotic voices some systems list under en-US — never read spelling words with these
-const BAD = /\(|bells|boing|bubbles|bad news|bahh|cellos|organ|pipe|trinoids|whisper|wobble|zarvox|albert|jester|superstar|good news|deranged|hysterical|bahh|flo|grandma|grandpa|reed|rocko|sandy|shelley|eddy|junior|ralph|fred|kathy/i;
-// choose the clearest American voice available, in preference order
+const BAD = /\(|bells|boing|bubbles|bad news|bahh|cellos|organ|pipe|trinoids|whisper|wobble|zarvox|albert|jester|superstar|good news|deranged|hysterical|flo|grandma|grandpa|reed|rocko|sandy|shelley|eddy|junior|ralph|fred|kathy/i;
+// choose the clearest American device voice available, in preference order
 function pickVoice(){
   if(!canSpeak) return;
   const us = speechSynthesis.getVoices().filter(v => /^en[-_]US/i.test(v.lang));
@@ -188,17 +192,66 @@ function pickVoice(){
        || us[0] || null;
 }
 if (canSpeak){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function stopSpeech(){ if(canSpeak) speechSynthesis.cancel(); }
-// speak a word slowly and clearly; slow = extra-slow for the "לאט" button
-function speak(text, slow){
+
+// --- Wikimedia human recordings: look up "En-us-<word>.ogg", remember the result ---
+const REC = {};  // word -> url | null (session cache)
+function recKey(w){ return 'rec-' + w; }
+async function findRec(word){
+  const w = (word||'').trim();
+  if (!w || !canAudio) return null;
+  if (w in REC) return REC[w];
+  const saved = store.get(recKey(w));
+  if (saved !== null){ REC[w] = saved || null; return REC[w]; }   // '' = known to have none
+  // try the word as written and lowercased (covers proper nouns like Spain / England)
+  const tries = [...new Set([w, w.toLowerCase()])];
+  let url = null;
+  for (const t of tries){
+    try{
+      const u = `https://commons.wikimedia.org/w/api.php?action=query&titles=${encodeURIComponent('File:En-us-' + t + '.ogg')}&prop=imageinfo&iiprop=url&format=json&origin=*`;
+      const r = await fetch(u); const d = await r.json();
+      const pages = d.query.pages, k = Object.keys(pages)[0];
+      if (k !== '-1' && pages[k].imageinfo){ url = pages[k].imageinfo[0].url; break; }
+    }catch(e){}
+  }
+  REC[w] = url; store.set(recKey(w), url || '');
+  return url;
+}
+function prefetchRecs(list){ if (CFG.lang==='en') (list||[]).forEach(x => findRec(x.w)); }
+
+let curAudio = null;
+function stopSpeech(){
+  try{ if(curAudio){ curAudio.pause(); curAudio = null; } }catch(e){}
+  if(canSpeak) speechSynthesis.cancel();
+}
+// device-voice fallback (quality varies); the setTimeout dodges a Chrome bug that drops speech right after cancel()
+function webSpeak(text, slow){
   if(!canSpeak) return;
   speechSynthesis.cancel();
-  if(!voice) pickVoice();                 // voices can load late — pick again if we still have none
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US'; if (voice) u.voice = voice;
-  u.rate = slow ? 0.5 : 0.7;              // slower than before, so each sound is clear
-  u.pitch = 1;
-  speechSynthesis.speak(u);
+  if(!voice) pickVoice();
+  setTimeout(() => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US'; if (voice) u.voice = voice;
+    u.rate = slow ? 0.6 : 0.8;
+    u.pitch = 1;
+    speechSynthesis.speak(u);
+  }, 40);
+}
+async function speak(text, slow){
+  stopSpeech();
+  const url = await findRec(text);
+  if (url && canAudio){
+    const a = new Audio(url);
+    try{ a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = true; }catch(e){}
+    a.playbackRate = slow ? 0.6 : 1;        // slow the recording without changing its pitch
+    curAudio = a;
+    let fell = false;
+    const fall = () => { if(fell) return; fell = true; if(curAudio===a) curAudio = null; webSpeak(text, slow); };
+    a.onerror = fall;
+    const p = a.play();
+    if (p && p.catch) p.catch(fall);        // e.g. browser can't play OGG → use the device voice
+    return;
+  }
+  webSpeak(text, slow);
 }
 const spkIcon = `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>`;
 const en = w => `<span class="ltr">${esc(w)}</span>`;
@@ -291,6 +344,7 @@ function start(mode, only){
   let q = [];
   for (const t of mode.split(',')) q = q.concat(shuffle(pool.filter(TYPES[t].need)).map(x=>({...x,t})));
   if (!q.length) return;
+  prefetchRecs(pool);                        // warm up the human recordings so playback is instant
   S = { mode, q, i:0, total:q.length, done:0, first:0, missed:new Map(), tried:new Set(), revealed:false };
   card();
 }
