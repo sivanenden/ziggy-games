@@ -22,6 +22,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.55 Rubik,system-
 h1,h2,.big{font-family:"Secular One",Rubik,sans-serif;font-weight:400;line-height:1.1;text-wrap:balance;margin:0}
 h1{font-size:clamp(36px,6vw,54px)}h2{font-size:clamp(26px,4vw,36px)}
 .dog{width:100%;max-width:440px;display:block;margin:0 auto}
+.hero-dog{max-width:190px;margin:0 auto}@media(min-width:700px){.hero-dog{max-width:260px}}
 .dog .tail{transform-origin:64px 96px;animation:wag 1.1s ease-in-out infinite}
 .dog.happy{animation:hop .6s ease}.dog.happy .tail{animation-duration:.25s}
 .dog.sad .head{transform:rotate(8deg);transform-origin:250px 80px;transition:transform .3s}
@@ -57,6 +58,8 @@ ul.miss{list-style:none;padding:0;margin:16px 0 0;text-align:start}
 ul.miss li{padding:10px 0;border-bottom:2px solid var(--line)}ul.miss b{font-size:22px;color:var(--brown)}
 textarea{width:100%;min-height:260px;font:16px/1.6 Rubik,sans-serif;border:3px solid var(--line);border-radius:16px;padding:14px;background:var(--card);color:var(--ink);direction:rtl}
 input[type=text]{width:100%;font:inherit;font-size:17px;border:3px solid var(--line);border-radius:14px;padding:12px;background:var(--card);color:var(--ink)}
+.datesel{width:100%;margin-top:8px;font:inherit;font-weight:700;font-size:20px;border:3px solid var(--brown);border-radius:16px;padding:14px 16px;min-height:56px;background:var(--card);color:var(--ink);cursor:pointer}
+.datesel:focus-visible{outline:4px solid var(--red);outline-offset:3px}
 .msg{font-weight:700;margin-top:10px;min-height:1.5em}
 .hide{display:none!important}
 .keys{font-size:14px;color:var(--soft);margin-top:14px}
@@ -138,47 +141,63 @@ function parseCSV(t){
   if(f||row.length){ row.push(f); rows.push(row) }
   return rows;
 }
-// columns are B (number), C (word), D (meaning); keep the last 10 rows that have a word
-function pickWords(rows){
-  const list = rows.map(r => ({ n: clean(r[0]), w: clean(r[1]), d: clean(r[2]) }))
-    .filter(x => x.w && /^\d+(\.0+)?$/.test(x.n));
-  return list.slice(-10).map(x => ({ w: x.w, d: x.d }));
+// Each dictation (a "week") is a block of 10 rows. Columns: A=date, B=number(1..10), C=word, D=meaning.
+// The date sits in column A on the block's first row only, so a new block starts whenever the number is 1.
+function buildWeeks(rows){
+  const weeks = []; let cur = null;
+  for (const r of rows){
+    const date = clean(r[0]), n = clean(r[1]).replace(/\.0+$/,''), w = clean(r[2]), d = clean(r[3]);
+    if (!/^\d+$/.test(n)) continue;              // skip the header row and any blank lines
+    if (n === '1' || !cur){ cur = { date, words: [] }; weeks.push(cur); }
+    if (date && !cur.date) cur.date = date;
+    if (w) cur.words.push({ w, d });
+  }
+  return weeks.filter(wk => wk.words.length);     // keep only weeks that actually have words
 }
-async function loadWords(){
+async function loadWeeks(){
   const base = `https://docs.google.com/spreadsheets/d/${CFG.sheet}/`;
   const urls = [
-    base + 'gviz/tq?tqx=out:csv&headers=1&tq=' + encodeURIComponent('select B,C,D'),
+    base + 'gviz/tq?tqx=out:csv&headers=1&tq=' + encodeURIComponent('select A,B,C,D'),
     base + 'export?format=csv'
   ];
-  for (const [i,u] of urls.entries()){
+  for (const u of urls){
     try{
       const r = await fetch(u, {cache:'no-store'});
       if(!r.ok) continue;
-      let rows = parseCSV(await r.text());
-      if (i === 1) rows = rows.map(x => x.slice(1));   // full export includes column A
-      const w = pickWords(rows);
-      if (w.length) return w;
+      const weeks = buildWeeks(parseCSV(await r.text()));
+      if (weeks.length) return weeks;
     }catch(e){}
   }
   return null;
 }
 
-/* ---------- speech (English only) ---------- */
+/* ---------- speech (English only): clear, slow American voice from the device ---------- */
 let voice = null;
 const canSpeak = 'speechSynthesis' in window;
+const canPlay = canSpeak;
+// novelty / robotic voices some systems list under en-US — never read spelling words with these
+const BAD = /\(|bells|boing|bubbles|bad news|bahh|cellos|organ|pipe|trinoids|whisper|wobble|zarvox|albert|jester|superstar|good news|deranged|hysterical|bahh|flo|grandma|grandpa|reed|rocko|sandy|shelley|eddy|junior|ralph|fred|kathy/i;
+// choose the clearest American voice available, in preference order
 function pickVoice(){
   if(!canSpeak) return;
-  const vs = speechSynthesis.getVoices().filter(v => /^en[-_]US/i.test(v.lang));
-  const pref = ['Google US English','Samantha','Microsoft Aria','Microsoft Jenny','Microsoft Zira','Alex'];
-  voice = pref.map(p => vs.find(v => v.name.includes(p))).find(Boolean) || vs[0] || null;
+  const us = speechSynthesis.getVoices().filter(v => /^en[-_]US/i.test(v.lang));
+  const pref = ['Google US English','Microsoft Aria','Microsoft Jenny','Microsoft Ava','Microsoft Michelle','Microsoft Guy','Samantha','Ava','Allison','Susan','Zoe','Nicky','Alex','Microsoft Zira'];
+  voice = pref.map(n => us.find(v => v.name.includes(n))).find(Boolean)
+       || us.find(v => /natural|neural|enhanced|premium|google/i.test(v.name))
+       || us.find(v => !BAD.test(v.name))
+       || us[0] || null;
 }
 if (canSpeak){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function stopSpeech(){ if(canSpeak) speechSynthesis.cancel(); }
+// speak a word slowly and clearly; slow = extra-slow for the "לאט" button
 function speak(text, slow){
   if(!canSpeak) return;
   speechSynthesis.cancel();
+  if(!voice) pickVoice();                 // voices can load late — pick again if we still have none
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'en-US'; if (voice) u.voice = voice;
-  u.rate = slow ? 0.5 : 0.85;
+  u.rate = slow ? 0.5 : 0.7;              // slower than before, so each sound is clear
+  u.pitch = 1;
   speechSynthesis.speak(u);
 }
 const spkIcon = `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>`;
@@ -202,7 +221,7 @@ const TYPES = {
     back:c=>`<div class="lbl">באנגלית:</div><div class="big word">${en(c.w)}</div>
       <button class="btn ghost spk" data-say="${esc(c.w)}">${spkIcon} שמיעה</button>`,
     tip:'בדקי אות אחרי אות: האם כתבת בדיוק ככה?', wrong:'טיפ: כתבי את המילה הנכונה 3 פעמים על הדף.' },
-  dict: { tag:'הכתבה', need:()=>canSpeak, auto:true,
+  dict: { tag:'הכתבה', need:()=>canPlay, auto:true,
     front:c=>`<div class="row" style="margin-top:14px">
       <button class="btn spk big-spk" data-say="${esc(c.w)}">${spkIcon} שמיעה</button>
       <button class="btn ghost spk" data-say="${esc(c.w)}" data-slow="1">לאט</button></div>`,
@@ -211,8 +230,28 @@ const TYPES = {
     tip:'בדקי אות אחרי אות: האם כתבת בדיוק ככה?', wrong:'טיפ: הקשיבי שוב וכתבי את המילה 3 פעמים.' }
 };
 
-let words = [];
+let weeks = [];       // all dictations from the sheet
+let sel = -1;         // index of the selected week
+let words = [];       // words of the selected week (what the games use)
 let status = 'loading';
+const DKEY = CACHE + '-date';
+function weekLabel(wk, i){ return wk.date || (wk.words[0] ? wk.words[0].w : ('#' + (i+1))); }
+// choose which week is active: the one the child picked last time if it's still there, else the default
+function applyDefault(){
+  if (!weeks.length){ sel = -1; words = []; return; }
+  let i = -1;
+  const saved = store.get(DKEY);
+  if (saved) i = weeks.findIndex(wk => (wk.date || '') === saved);
+  if (i < 0) i = weeks.length - 1;          // latest = most recent (bottom of the sheet)
+  sel = Math.max(0, i);
+  words = weeks[sel].words;
+}
+function selectWeek(i){
+  if (i < 0 || i >= weeks.length) return;
+  sel = i; words = weeks[i].words;
+  store.set(DKEY, weeks[i].date || '');
+  home();
+}
 const app = document.getElementById('app');
 const dog = cls => `<svg class="dog ${cls||''}" viewBox="0 0 330 190" role="img" aria-label="זיגי הכלב"><use href="#ziggy"/></svg>`;
 let S = {};
@@ -222,22 +261,27 @@ const COMFORT = ['לא נורא, זה חוזר עוד מעט','זיגי בטוח
 function home(){
   S = {};
   const ready = words.length > 0;
-  const note = status === 'loading' ? 'טוענת את המילים מהגיליון של המורה…'
-    : status === 'live' ? `${words.length} המילים האחרונות מהגיליון של המורה`
-    : status === 'cached' ? `לא הצלחתי להתחבר לגיליון, אז אלה המילים מהפעם הקודמת (${words.length})`
-    : 'לא הצלחתי לטעון את המילים מהגיליון.';
+  const selDate = sel >= 0 && weeks[sel] ? weeks[sel].date : '';
+  const note = status === 'loading' ? 'טוענת את ההכתבות מהגיליון של המורה…'
+    : status === 'live' ? (ready ? `${words.length} מילים${selDate ? ' להכתבה ' + esc(selDate) : ''}` : 'בחרי תאריך כדי להתחיל')
+    : status === 'cached' ? `לא הצלחתי להתחבר לגיליון, אז אלה ההכתבות מהפעם הקודמת`
+    : 'לא הצלחתי לטעון את ההכתבות מהגיליון.';
   app.innerHTML = `
-  <div class="center">${dog()}<h1>${CFG.title}</h1>
+  <div class="center"><div class="hero-dog">${dog()}</div><h1>${CFG.title}</h1>
   <p class="lead">${CFG.sub}</p><p class="status ${status}">${note}</p>
   ${status==='error' ? `<button class="btn" id="retry">לנסות שוב</button>` : ''}</div>
   <div class="card ${ready?'':'dim'}">
-    <h2>מה משחקים היום?</h2>
+    ${weeks.length ? `<label class="lbl" for="wk">בחרי תאריך הכתבה:</label>
+    <select id="wk" class="datesel">${weeks.map((wk,i) => ({wk,i})).reverse().map(({wk,i}) =>
+      `<option value="${i}" ${i===sel?'selected':''}>${esc(weekLabel(wk,i))}</option>`).join('')}</select>` : ''}
+    <h2 style="margin-top:${weeks.length?'20px':'0'}">מה משחקים היום?</h2>
     <div class="modes">${CFG.modes.map(([m,t,s]) =>
       `<button class="btn mode" data-m="${m}" ${ready?'':'disabled'}>${t}<small>${s}</small></button>`).join('')}</div>
-    ${CFG.lang==='en' && !canSpeak ? `<div class="tip">הדפדפן הזה לא יודע להשמיע מילים. כדאי לפתוח בכרום כדי לשחק בהכתבה.</div>` : ''}
+    ${CFG.lang==='en' && !canPlay ? `<div class="tip">הדפדפן הזה לא יודע להשמיע מילים. כדאי לפתוח בכרום כדי לשחק בהכתבה.</div>` : ''}
     <div class="tip">מכינים דף ועיפרון. כותבים את התשובה על הדף, ורק אחר כך לוחצים "הראי לי".</div>
   </div>
   ${CFG.other ? `<div class="center"><a class="link" href="${CFG.other[0]}">${CFG.other[1]}</a></div>` : ''}`;
+  const wsel = document.getElementById('wk'); if (wsel) wsel.onchange = () => selectWeek(+wsel.value);
   app.querySelectorAll('[data-m]').forEach(b => b.onclick = () => start(b.dataset.m));
   const r = document.getElementById('retry'); if (r) r.onclick = init;
 }
@@ -270,7 +314,7 @@ function card(){
     </div>
     <div class="keys">אפשר גם מקלדת: רווח כדי לחשוף, 1 = צדקתי, 2 = טעיתי</div>
   </div>`;
-  document.getElementById('back').onclick = () => { if(canSpeak) speechSynthesis.cancel(); home(); };
+  document.getElementById('back').onclick = () => { stopSpeech(); home(); };
   document.getElementById('reveal').onclick = reveal;
   document.getElementById('yes').onclick = () => answer(true);
   document.getElementById('no').onclick = () => answer(false);
@@ -331,11 +375,11 @@ document.addEventListener('keydown', e => {
 
 async function init(){
   status = 'loading';
-  try { const c = JSON.parse(store.get(CACHE) || 'null'); if (c && c.length) words = c; } catch(e){}
+  try { const c = JSON.parse(store.get(CACHE) || 'null'); if (c && c.length){ weeks = c; applyDefault(); } } catch(e){}
   home();
-  const w = await loadWords();
-  if (w){ words = w; status = 'live'; store.set(CACHE, JSON.stringify(w)); }
-  else status = words.length ? 'cached' : 'error';
+  const w = await loadWeeks();
+  if (w){ weeks = w; status = 'live'; store.set(CACHE, JSON.stringify(w)); applyDefault(); }
+  else status = weeks.length ? 'cached' : 'error';
   if (!S.q) home();
 }
 init();
