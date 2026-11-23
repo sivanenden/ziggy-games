@@ -244,7 +244,7 @@ function applyDefault(){
   if (saved) i = weeks.findIndex(wk => (wk.date || '') === saved);
   if (i < 0) i = weeks.length - 1;          // latest = most recent (bottom of the sheet)
   sel = Math.max(0, i);
-  words = weeks[sel].words;
+  words = (weeks[sel] && weeks[sel].words) || [];
 }
 function selectWeek(i){
   if (i < 0 || i >= weeks.length) return;
@@ -375,7 +375,7 @@ document.addEventListener('keydown', e => {
 
 async function init(){
   status = 'loading';
-  try { const c = JSON.parse(store.get(CACHE) || 'null'); if (c && c.length){ weeks = c; applyDefault(); } } catch(e){}
+  try { const c = JSON.parse(store.get(CACHE) || 'null'); if (Array.isArray(c) && c[0] && Array.isArray(c[0].words)){ weeks = c; applyDefault(); } } catch(e){}
   home();
   const w = await loadWeeks();
   if (w){ weeks = w; status = 'live'; store.set(CACHE, JSON.stringify(w)); applyDefault(); }
